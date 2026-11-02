@@ -1,0 +1,9 @@
+# Direct dependencies only. Run `pip freeze` for a lock file; do not commit it here.
+fastapi
+uvicorn[standard]
+httpx
+python-dotenv
+pyodbc
+openai
+pytest
+qrcode

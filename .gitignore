@@ -1,0 +1,80 @@
+#env
+.env
+*.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.pem
+*.key
+
+# 2. PYTHON / FASTAPI DEPENDENCIES
+.venv/
+venv/
+ENV/
+env/
+
+# Python caching files
+**/__pycache__/
+*.py[cod]
+*\$py.class
+.pytest_cache/
+.mypy_cache/
+
+
+# 3. JAVASCRIPT / VITE DEPENDENCIES
+
+**/node_modules/
+.pnpm-store/
+
+# Vite production build output (if someone runs a local build test)
+**/dist/
+*.local
+
+
+# 4. SYSTEM & EDITOR CLUTTER (For all 4 team members)
+
+# VS Code settings and workspaces
+.vscode/
+*.code-workspace
+
+# JetBrains / PyCharm / WebStorm
+.idea/
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+
+Backend/static/
+
+# DATABASE
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+
+#  LOGS & COVERAGE
+*.log
+logs/
+.coverage
+htmlcov/
+.ruff_cache/
+
+#  KEEP THE TEMPLATE
+!.env.example
+
+
+cloudflared.exe
+# Tunnel binaries. cloudflared/ngrok are downloaded per machine, and a
+# 55 MB executable in a public repo is both useless and suspicious.
+*.exe
+
+# Local agent tool permissions. Machine-specific, not shared config.
+.claude/settings.local.json
+
+cookies.txt
+body.json

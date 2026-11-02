@@ -1,0 +1,140 @@
+import asyncio
+import logging
+from contextlib import asynccontextmanager, suppress
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+from core import config, events
+from core.db import get_db
+from core.phone import mask
+from routes.admin import router as admin_router
+from routes.auth import require_admin, router as auth_router
+from routes.cases import router as cases_router
+from routes.chat import router as chat_router
+from routes.events import router as events_router
+from routes.register import router as register_router
+from routes.responder import router as responder_router
+from routes.volunteers import router as volunteers_router
+from routes.webhook import router as webhook_router
+from routes.whatsapp import router as whatsapp_router
+from routes.zones import router as zones_router
+from services import silence
+
+logger = logging.getLogger("safezone.main")
+
+BASE = Path(__file__).parent
+STATIC_DIR = BASE / "static"
+
+API_PREFIXES = {"api", "webhook", "events"}
+
+
+def configure_logging() -> None:
+    logging.basicConfig(
+        level=getattr(logging, config.LOG_LEVEL, logging.INFO),
+        format="%(asctime)s %(levelname)-7s %(name)-22s %(message)s",
+        datefmt="%H:%M:%S",
+        force=True,
+    )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+configure_logging()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    for problem in config.startup_report():
+        logger.warning(problem)
+
+    if config.ALLOWLIST_ONLY:
+        allowed = ", ".join(mask(number) for number in config.DEMO_ALLOWLIST) or "(none)"
+        logger.info(
+            "ALLOWLIST_ONLY is on. %d number(s) may receive messages: %s",
+            len(config.DEMO_ALLOWLIST),
+            allowed,
+        )
+    else:
+        logger.warning("ALLOWLIST_ONLY is off — any number can receive messages.")
+
+    from core import auth as _auth
+
+    if _auth.is_configured():
+        logger.info("Control room login is on for %s.", config.ADMIN_EMAIL)
+    else:
+        missing = [
+            name
+            for name, value in (
+                ("ADMIN_EMAIL", config.ADMIN_EMAIL),
+                ("ADMIN_PASSWORD_HASH", config.ADMIN_PASSWORD_HASH),
+                ("SESSION_SECRET", config.SESSION_SECRET),
+            )
+            if not value.strip()
+        ]
+        logger.warning(
+            "Control room login is NOT configured (%s missing), so /control and "
+            "/volunteers will refuse every sign-in. Run: python -m scripts.hash_password",
+            ", ".join(missing),
+        )
+
+    events.set_loop(asyncio.get_running_loop())
+    get_db()
+
+    silence_task = asyncio.create_task(silence.run_forever())
+    try:
+        yield
+    finally:
+        silence_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await silence_task
+
+
+app = FastAPI(title="SafeZone", lifespan=lifespan)
+
+
+@app.get("/api/hello")
+def hello():
+    return {"message": "Backend Setup done! Waiting for the task"}
+
+
+app.include_router(webhook_router)
+app.include_router(responder_router)
+app.include_router(register_router)
+app.include_router(auth_router)
+app.include_router(zones_router)
+app.include_router(whatsapp_router)
+app.include_router(chat_router)
+
+PROTECTED = [Depends(require_admin)]
+app.include_router(cases_router, dependencies=PROTECTED)
+app.include_router(volunteers_router, dependencies=PROTECTED)
+app.include_router(admin_router, dependencies=PROTECTED)
+app.include_router(events_router, dependencies=PROTECTED)
+
+
+def mount_spa(app: FastAPI) -> None:
+    if not STATIC_DIR.exists():
+        logger.warning("Static build not found at %s; SPA is not served.", STATIC_DIR)
+        return
+
+    assets_dir = STATIC_DIR / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa(full_path: str):
+        first_segment = full_path.split("/", 1)[0]
+        if first_segment in API_PREFIXES:
+            raise HTTPException(status_code=404, detail="Not Found")
+
+        root = STATIC_DIR.resolve()
+        candidate = (root / full_path).resolve()
+        if candidate.is_file() and root in candidate.parents:
+            return FileResponse(candidate)
+        return FileResponse(root / "index.html")
+
+
+mount_spa(app)
